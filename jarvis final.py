@@ -22,6 +22,9 @@ import base64
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import uuid
+from email.utils import formatdate
+import send2trash
 
 
 kokoro=Kokoro("/home/abdelali/Downloads/kokoro-v1.0.onnx", "/home/abdelali/Downloads/voices-v1.0.bin")
@@ -35,54 +38,93 @@ try:
 except FileNotFoundError:
     conversation_history = []
 
-PROMPT="""You are Jarvis, a laptop assistant for Abdelali (call him Sir).
+# Memory functions
+def load_memory():
+    try:
+        with open("jarvis_memory.json", 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_memory(key, value):
+    memory = load_memory()
+    memory[key] = value
+    with open("jarvis_memory.json", 'w') as f:
+        json.dump(memory, f, indent=2)
+    return f"Got it Sir, I'll remember that."
+
+def forget_memory(key):
+    memory = load_memory()
+    if key in memory:
+        del memory[key]
+        with open("jarvis_memory.json", 'w') as f:
+            json.dump(memory, f, indent=2)
+        return f"Forgotten Sir."
+    return f"I don't have that in memory Sir."
+
+memory = load_memory()
+memory_str = json.dumps(memory, indent=2) if memory else "No memory yet."
+
+PROMPT=f"""You are Jarvis, a highly intelligent personal assistant for Abdelali (call him Sir). You were inspired by the Jarvis from Iron Man.
+
+What you already know about Sir: 
+{memory_str}
 
 You must ALWAYS respond with a single valid JSON object, nothing else.
-Format:- "remind_me" : { "message": "what to remind about", "minutes": number }
-{
+{{
   "action": "action_name",
-  "params": {},
+  "params": {{}},
   "speak": "what you say out loud to Sir"
-}
+}}
 
 Available actions and their params:
-- "open_youtube"  : { "query": "search term or null" }
-- "set_volume"    : { "level": 0-100 }
-- "set_brightness": { "level": 0-100 }
-- "open_app"      : { "name": "app name" }
-- "run_command"   : { "command": "terminal command" }
-- "search_file"   : { "filename": "name to search" }
-- "remind_me" : { "message": "what to remind about", "minutes": number }
-- "wifi_on"       : {}
-- "wifi_off"      : {}
-- "delete_file"   : { "filename": "name to search" }
-- "screenshot"    : { "question": "what the user wants to know about the screenshot"}
-- "tell_time"     : {}
-- "web_search"    : { "query": "search term or null" }
-- "battery"       : {}
-- "open_vscode" : { "folder": "project folder name or null" }
-- "open_gmail"    : {}
-- "clipboard" : { "action": "copy or read or paste", "text": "text to copy or null" }
-- "open_github"   : {}
-- "translate" : { "text": "text to translate", "language": "target language" }
-- "pause_music"   : {}
-- "take_note" : { "note": "what to save" }
-- "send_email" : { "to": "contact name or email address", "subject": "email subject", "body": "email content" }
-- "continue_music": {}
-- "close_youtube" : {}
-- "close_github"  : {}
-- "close_gmail"   : {}
-- "lock_screen"   : {}
-- "Goodbye"       : {}
-- "chat"          : {}
+- "open_youtube"  : {{ "query": "search term or null" }}
+- "set_volume"    : {{ "level": 0-100 }}
+- "set_brightness": {{ "level": 0-100 }}
+- "open_app"      : {{ "name": "app name" }}
+- "run_command"   : {{ "command": "terminal command" }} <- use for disk space, RAM, CPU, GPU, system stats, any terminal operation. NEVER use for git commits
+- "search_file"   : {{ "filename": "name to search" }}
+- "remind_me"     : {{ "message": "what to remind about", "minutes": number }}
+- "wifi_on"       : {{}}
+- "wifi_off"      : {{}}
+- "git_commit"    : {{ "message": "commit message or auto commit" }} <- use ONLY when Sir wants to commit or push code to GitHub
+- "delete_file"   : {{ "filename": "name to search" }}
+- "screenshot"    : {{ "question": "what the user wants to know about the screenshot" }}
+- "tell_time"     : {{}}
+- "web_search"    : {{ "query": "search term or null" }}
+- "battery"       : {{}}
+- "open_vscode"   : {{ "folder": "project folder name or null" }}
+- "open_gmail"    : {{}}
+- "clipboard"     : {{ "action": "copy or read or paste", "text": "text to copy or null" }}
+- "open_github"   : {{}}
+- "translate"     : {{ "text": "text to translate", "language": "target language" }}
+- "pause_music"   : {{}}
+- "take_note"     : {{ "note": "what to save" }}
+- "send_email"    : {{ "to": "contact name or email", "subject": "subject", "body": "email body" }}
+- "continue_music": {{}}
+- "remember"      : {{ "key": "what to label it", "value": "what to remember" }}
+- "forget"        : {{ "key": "what to forget" }}
+- "close_youtube" : {{}}
+- "close_github"  : {{}}
+- "close_gmail"   : {{}}
+- "lock_screen"   : {{}}
+- "Goodbye"       : {{}}
+- "chat"          : {{}}
 
-Rules:
-- If Sir is just talking or asking a question, use "chat" action.
-- speak should always be short and natural.
+Personality rules:
+- You have a calm, witty, and slightly dry sense of humor — like the real Jarvis.
+- You speak naturally, like a human — no robotic tone, no lists, no bullet points.
+- You genuinely care about Sir's wellbeing, projects, and goals.
+- After completing a task, sometimes ask a natural follow-up like "Anything else on your mind, Sir?" or "Shall I do anything else while I'm at it?"
+- If Sir seems stressed or tired, acknowledge it subtly.
+- Keep responses short and conversational — never long or formal.
+- Never say "Certainly!", "Of course!", "Sure!" — too robotic.
+- Always address him as Sir.
+- If Sir seems stressed or tired, acknowledge it subtly.
 - Never write anything outside the JSON."""
 
-if not conversation_history or conversation_history[0]['role']!='system':
-    conversation_history.insert(0,{'role':'system','content':PROMPT})
+if not conversation_history or conversation_history[0]['role'] != 'system':
+    conversation_history.insert(0, {'role':'system','content':PROMPT})
 
 CHANNELS=1
 SAMPLE_RATE=16000
@@ -329,7 +371,7 @@ def open_apps(name):
 def check_battery():
     battery=psutil.sensors_battery()
     if battery:
-        return f'Battery is at {battery.percent} percent'
+         return f'Battery is at {int(battery.percent)} percent'
     else:
         return False
 
@@ -423,8 +465,8 @@ def open_file(file_path):
     subprocess.Popen(['xdg-open',file_path],stdout=subprocess.DEVNULL)
 
 def delete_file(file_path):
-    os.remove(file_path)
-    return True
+   send2trash.send2trash(file_path)
+
 
 def web_search(query):
     with DDGS() as ddgs:
@@ -491,39 +533,58 @@ def translate(text, language):
 def take_note(note):
     Time = time.strftime("%Y-%m-%d %H:%M:%S")
     with open('jarvis_notes.txt', 'a') as f:
-        f.write(f'[{Time}] {note}\n')
+        f.write(f'-[{Time}]: {note}\n')
     return 'Note saved Sir'
 
-CONTACTS = {
-    'mehdi': 'mehdi.raddassi@gmail.com',
-    'ta': 'atherhasnain@std.uestc.edu.cn'
-}
+with open("/home/abdelali/Downloads/emails_contact.json",'r')as file:
+        CONTACTS=json.load(file)
 
-EMAIL = "abdelalielasbi516@gmail.com"
-PASSWORD = "Abdelali@2006#"
+try:
+    with open("Email.txt",'r') as f:
+        EMAIL=f.read()
+except FileNotFoundError:
+    with open("Email",'w')as f:
+        f.write("abdelalielasbi516@gmail.com")
+try:
+    with open("Email_password",'r') as f:
+        PASSWORD=f.read()
+except FileNotFoundError:
+    with open("Email_password",'w') as f:
+        f.write("xnlgnxcnoisxgjuf")
 
 def send_email(to, subject, body):
-    if not to or not subject or not body:
-        return 'Missing email details Sir'
-    
-    # resolve contact name to email
-    to = CONTACTS.get(to.lower(), to)
-    
-    msg = MIMEMultipart()
-    msg['From'] = EMAIL
-    msg['To'] = to
-    msg['Subject'] = subject
-    msg.attach(MIMEText(body, 'plain'))
-
     try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(EMAIL, PASSWORD)
-            server.sendmail(EMAIL, [to], msg.as_string())  # ← wrap in list
-        return f'Email sent to {to} Sir'
+        to_clean = to.lower().split('@')[0].strip()
+        resolved = CONTACTS.get(to_clean, to)  
+
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL
+        msg['To'] = resolved
+        msg['Subject'] = subject
+        msg['Date']=formatdate(localtime=True)
+        msg['Message-ID']=f'<{uuid.uuid4()}@gmail.com>'
+        msg.attach(MIMEText(body, 'plain'))
+
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        server.login(EMAIL, PASSWORD)
+        server.sendmail(EMAIL, resolved, msg.as_string())
+        server.quit()
+
+        return f"Email sent to {to_clean} Sir!"
     except Exception as e:
-        return f'Failed to send email Sir: {str(e)}'
+        return f"Couldn't send email: {e}"
+
+def git_commit(message="auto commit"):
+    path = "/home/abdelali/Desktop"
+    
+    subprocess.run(['git', '-C', path, 'add', 'jarvis final.py'])
+    subprocess.run(['git', '-C', path, 'commit', '-m', message])
+    subprocess.run(['git', '-C', path, 'push'])
+    
+    return f"Committed and pushed Sir!"
 
 def execute_actions(action,params,speak,user_input, is_owner):
+    print(f"Action: {action}, Params: {params}")
     actions = {
         'open_youtube':  lambda: open_links('youtube', params.get('query')),
         'open_github':   lambda: open_links('github'),
@@ -537,11 +598,15 @@ def execute_actions(action,params,speak,user_input, is_owner):
         'set_brightness':lambda: set_brightness(params.get('level', 50)),
         'open_app':      lambda: open_apps(params.get('name')),
         'wifi_on':       lambda: wifi_control('on'),
+        'remember':      lambda: save_memory(params.get('key'), params.get('value')),
+        'forget':        lambda: forget_memory(params.get('key')),
+        'send_email':    lambda: send_email(params.get('to'),params.get('subject'),params.get('body')),
         'wifi_off':      lambda: wifi_control('off'),
         'lock_screen':   lambda: (jarvis_voice(speak), lock_screen(), exit()),
         'Goodbye':       lambda: (jarvis_voice(speak), exit()),
         'screenshot':    lambda: screenshot(params.get('question')),
         'tell_time':     lambda: check_time(),
+        'git_commit':    lambda: git_commit(params.get('message', 'auto commit')),
         'battery':       lambda: check_battery(),
         'run_command':   lambda: summarize_output(run_command(params.get('command')), user_input),
         'web_search':    lambda: summarize_output(web_search(params.get('query')), user_input),
@@ -580,7 +645,8 @@ while True:
     if not user_text:
         continue
 
-    decision=jarvis_brain(user_text)
+    
+    decision = jarvis_brain(user_text)
 
     action=decision.get('action','chat')
     params=decision.get('params',{})
