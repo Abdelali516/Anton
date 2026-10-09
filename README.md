@@ -6,10 +6,6 @@ A fully local, offline voice assistant inspired by Iron Man's Jarvis — built f
 ![platform](https://img.shields.io/badge/platform-Linux-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-yellow)
 
-## Demo
-
-*[Insert demo video / GIF here]*
-
 ## Overview
 
 Anton listens for your voice, transcribes it, verifies it's actually you speaking, decides what to do using a fine-tuned local LLM, executes the action on your machine, and speaks the result back — all without sending anything to the cloud. It can open apps and websites, control system settings, manage files, send emails, search the web, translate text, take notes, automate git commits, read your screen, and more.
